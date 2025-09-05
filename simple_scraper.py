@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Simple Defense News Scraper
+Simple Defense News Scraper - ERROR FREE VERSION
 Just extracts articles with links, full text, and dates
 """
 
@@ -21,23 +21,39 @@ class SimpleNewsScraper:
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
         })
         
-        # News sources with RSS feeds
+        # Enhanced news sources with RSS feeds
         self.sources = {
             "Defense News": [
                 "https://idrw.org/feed/",
                 "https://defence.in/feed/",
-                "https://www.indiandefensenews.in/feed/"
+                "https://www.indiandefensenews.in/feed/",
+                "https://www.defencexp.com/feed/"
             ],
             "Space News": [
-                "https://www.isro.gov.in/rss.xml"
+                "https://www.isro.gov.in/rss.xml",
+                "https://ispa.space/feed/",
+                "https://www.thehindu.com/sci-tech/science/feeder/default.rss",
+                "https://economictimes.indiatimes.com/industry/aerospace/defence/rssfeeds/13352306.cms"
             ]
         }
         
-        # Keywords to filter relevant articles
-        self.keywords = [
-            "india", "indian", "defense", "defence", "space", "isro", "hal", "drdo",
-            "private", "contract", "deal", "startup", "investment", "manufacturing"
+        # Enhanced keywords to filter relevant articles
+        self.defense_keywords = [
+            "india", "indian", "defense", "defence", "hal", "drdo", "bhel", "bel",
+            "private", "contract", "deal", "startup", "investment", "manufacturing",
+            "atmanirbhar", "make in india", "indigenous", "tejas", "brahmos"
         ]
+        
+        self.space_keywords = [
+            "isro", "indian space", "space", "satellite", "launch", "rocket",
+            "chandrayaan", "mangalyaan", "gaganyaan", "mission", "orbit",
+            "skyroot", "agnikul", "pixxel", "bellatrix", "dhruva space",
+            "private space", "space startup", "in-space", "antrix", "nsil",
+            "pslv", "gslv", "sslv", "earth observation", "communication satellite",
+            "space technology", "space policy", "space sector", "space economy"
+        ]
+        
+        self.keywords = self.defense_keywords + self.space_keywords
     
     def extract_full_article(self, url):
         """Extract full article text from URL"""
@@ -100,8 +116,30 @@ class SimpleNewsScraper:
         return text.strip()
     
     def is_relevant_article(self, title, content):
-        """Check if article is relevant to defense/space"""
+        """Enhanced relevance check for defense/space articles"""
         text = (title + " " + content).lower()
+        
+        # Higher priority for space content
+        space_priority_keywords = [
+            "isro", "indian space", "space mission", "satellite launch", "rocket",
+            "skyroot", "agnikul", "pixxel", "private space", "space startup",
+            "chandrayaan", "gaganyaan", "mangalyaan", "space policy"
+        ]
+        
+        # Check for high-priority space content
+        if any(keyword in text for keyword in space_priority_keywords):
+            return True
+        
+        # Check for defense content
+        defense_priority_keywords = [
+            "hal", "drdo", "defense contract", "indigenous", "atmanirbhar",
+            "tejas", "brahmos", "private defense", "defense startup"
+        ]
+        
+        if any(keyword in text for keyword in defense_priority_keywords):
+            return True
+        
+        # General relevance check
         return any(keyword in text for keyword in self.keywords)
     
     def parse_date(self, date_string):
@@ -126,9 +164,84 @@ class SimpleNewsScraper:
         
         return datetime.now().strftime("%d %B %Y")
     
-    def scrape_rss_feeds(self):
-        """Scrape all RSS feeds"""
+    def add_google_news_search(self, days_back=7):
+        """Add Google News search for Indian space developments"""
         articles = []
+        
+        # Specific search terms for Indian space news
+        search_terms = [
+            "ISRO mission launch India",
+            "Indian space startup funding",
+            "Skyroot Aerospace India",
+            "Agnikul Cosmos India", 
+            "Pixxel satellite India"
+        ]
+        
+        print("Searching Google News for Indian space developments...")
+        
+        for term in search_terms[:3]:  # Limit searches to avoid rate limiting
+            try:
+                # Simple Google News RSS search
+                encoded_term = term.replace(" ", "+")
+                search_url = f"https://news.google.com/rss/search?q={encoded_term}+india&hl=en-IN&gl=IN&ceid=IN:en"
+                
+                response = self.session.get(search_url, timeout=10)
+                if response.status_code == 200:
+                    feed = feedparser.parse(response.content)
+                    
+                    for entry in feed.entries[:2]:  # Top 2 results per search
+                        # Check date
+                        if hasattr(entry, 'published_parsed') and entry.published_parsed:
+                            pub_date = datetime(*entry.published_parsed[:6])
+                            cutoff_date = datetime.now() - timedelta(days=days_back)
+                            if pub_date < cutoff_date:
+                                continue
+                        
+                        # Check relevance
+                        if self.is_relevant_article(entry.title, entry.get('summary', '')):
+                            print(f"    Found: {entry.title[:60]}...")
+                            
+                            # Extract full content
+                            full_content = self.extract_full_article(entry.link)
+                            
+                            article = {
+                                'title': entry.title,
+                                'url': entry.link,
+                                'content': full_content,
+                                'date': self.parse_date(entry.get('published_parsed')),
+                                'source': 'Google News Search',
+                                'category': 'Space News' if any(kw in entry.title.lower() for kw in self.space_keywords) else 'Defense News'
+                            }
+                            
+                            articles.append(article)
+                            
+            except Exception as e:
+                print(f"    Error searching for '{term}': {e}")
+        
+        return articles
+    
+    def remove_duplicates(self, articles):
+        """Remove duplicate articles based on title similarity"""
+        unique_articles = []
+        seen_titles = set()
+        
+        for article in articles:
+            # Simple deduplication based on title
+            title_key = re.sub(r'[^\w\s]', '', article['title'].lower())
+            title_key = ' '.join(title_key.split()[:5])  # First 5 words
+            
+            if title_key not in seen_titles:
+                seen_titles.add(title_key)
+                unique_articles.append(article)
+        
+        return unique_articles
+    
+    def scrape_rss_feeds(self, days_back=7):
+        """Scrape all RSS feeds for articles from specified number of days"""
+        articles = []
+        cutoff_date = datetime.now() - timedelta(days=days_back)
+        
+        print(f"Looking for articles from the last {days_back} days (since {cutoff_date.strftime('%Y-%m-%d')})")
         
         for category, feeds in self.sources.items():
             print(f"Scraping {category} sources...")
@@ -141,14 +254,14 @@ class SimpleNewsScraper:
                     if response.status_code == 200:
                         feed = feedparser.parse(response.content)
                         
-                        for entry in feed.entries[:10]:  # Latest 10 articles
-                            # Check if article is from last 7 days
+                        for entry in feed.entries[:15]:  # Check more articles
+                            # Check if article is within specified timeframe
                             if hasattr(entry, 'published_parsed') and entry.published_parsed:
                                 pub_date = datetime(*entry.published_parsed[:6])
-                                if (datetime.now() - pub_date).days > 7:
+                                if pub_date < cutoff_date:
                                     continue
                             
-                            # Basic relevance check
+                            # Enhanced relevance check
                             if self.is_relevant_article(entry.title, entry.get('summary', '')):
                                 
                                 # Extract full article content
@@ -172,22 +285,60 @@ class SimpleNewsScraper:
                 except Exception as e:
                     print(f"    Error scraping {feed_url}: {e}")
         
+        # Add Google News search results for space content
+        try:
+            google_articles = self.add_google_news_search(days_back)
+            articles.extend(google_articles)
+        except Exception as e:
+            print(f"Error in Google News search: {e}")
+        
+        # Remove duplicates based on title similarity
+        articles = self.remove_duplicates(articles)
+        
         return articles
     
-    def generate_simple_report(self, articles):
-        """Generate simple markdown report"""
-        if not articles:
-            return "No articles found this week."
+    def generate_company_summary(self, articles):
+        """Generate a summary of companies mentioned across all articles"""
         
-        report = f"""# Defense & Space News Summary
-## Week of {datetime.now().strftime('%B %d, %Y')}
-
-Total Articles: {len(articles)}
-
----
-
-"""
+        # Key companies to track
+        defense_companies = [
+            "HAL", "Hindustan Aeronautics", "DRDO", "BEL", "BHEL", "Tata Advanced Systems",
+            "TASL", "L&T", "Larsen & Toubro", "Mahindra Defense", "Kalyani Group", 
+            "Bharat Forge", "Reliance Defence", "Adani Defence"
+        ]
         
+        space_companies = [
+            "ISRO", "Skyroot", "Agnikul", "Pixxel", "Bellatrix", "Dhruva Space",
+            "Astrome", "Antrix", "NSIL", "Kawa Space", "Satellogic India"
+        ]
+        
+        mentioned_defense = set()
+        mentioned_space = set()
+        
+        for article in articles:
+            text = (article['title'] + " " + article['content']).lower()
+            
+            for company in defense_companies:
+                if company.lower() in text:
+                    mentioned_defense.add(company)
+            
+            for company in space_companies:
+                if company.lower() in text:
+                    mentioned_space.add(company)
+        
+        summary = "\n## 📊 COMPANIES MENTIONED THIS PERIOD\n\n"
+        
+        if mentioned_defense:
+            summary += f"**Defense Companies:** {', '.join(sorted(mentioned_defense))}\n\n"
+        
+        if mentioned_space:
+            summary += f"**Space Companies:** {', '.join(sorted(mentioned_space))}\n\n"
+        
+        if not mentioned_defense and not mentioned_space:
+            summary += "No major defense or space companies specifically mentioned.\n\n"
+        
+        return summary
+    
     def generate_simple_report(self, articles, days_back):
         """Generate enhanced markdown report with separate defense and space sections"""
         if not articles:
@@ -246,51 +397,9 @@ Total Articles: {len(articles)}
         
         return report
     
-    def generate_company_summary(self, articles):
-        """Generate a summary of companies mentioned across all articles"""
-        
-        # Key companies to track
-        defense_companies = [
-            "HAL", "Hindustan Aeronautics", "DRDO", "BEL", "BHEL", "Tata Advanced Systems",
-            "TASL", "L&T", "Larsen & Toubro", "Mahindra Defense", "Kalyani Group", 
-            "Bharat Forge", "Reliance Defence", "Adani Defence"
-        ]
-        
-        space_companies = [
-            "ISRO", "Skyroot", "Agnikul", "Pixxel", "Bellatrix", "Dhruva Space",
-            "Astrome", "Antrix", "NSIL", "Kawa Space", "Satellogic India"
-        ]
-        
-        mentioned_defense = set()
-        mentioned_space = set()
-        
-        for article in articles:
-            text = (article['title'] + " " + article['content']).lower()
-            
-            for company in defense_companies:
-                if company.lower() in text:
-                    mentioned_defense.add(company)
-            
-            for company in space_companies:
-                if company.lower() in text:
-                    mentioned_space.add(company)
-        
-        summary = "\n## 📊 COMPANIES MENTIONED THIS PERIOD\n\n"
-        
-        if mentioned_defense:
-            summary += f"**Defense Companies:** {', '.join(sorted(mentioned_defense))}\n\n"
-        
-        if mentioned_space:
-            summary += f"**Space Companies:** {', '.join(sorted(mentioned_space))}\n\n"
-        
-        if not mentioned_defense and not mentioned_space:
-            summary += "No major defense or space companies specifically mentioned.\n\n"
-        
-        return summary
-    
-    def save_report(self, report):
+    def save_report(self, report, days_back=7):
         """Save report to file"""
-        filename = f"defense_news_{datetime.now().strftime('%Y%m%d')}.md"
+        filename = f"defense_news_{days_back}days_{datetime.now().strftime('%Y%m%d')}.md"
         try:
             with open(filename, 'w', encoding='utf-8') as f:
                 f.write(report)
@@ -300,34 +409,30 @@ Total Articles: {len(articles)}
             print(f"Error saving report: {e}")
             return None
     
-    def run_scraper(self):
-        """Main scraping function"""
+    def run_scraper(self, days_back=7):
+        """Main scraping function - FIXED VERSION"""
         print("Starting defense & space news scraping...")
         print(f"Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"Looking for articles from the last {days_back} days")
         
         # Scrape articles
-        articles = self.scrape_rss_feeds()
+        articles = self.scrape_rss_feeds(days_back)
         
         if not articles:
-            print("No relevant articles found.")
+            print(f"No relevant articles found for the last {days_back} days.")
             return
         
         print(f"Found {len(articles)} relevant articles")
         
         # Generate report
-        report = self.generate_simple_report(articles)
+        report = self.generate_simple_report(articles, days_back)
         
         # Save report
-        filename = self.save_report(report)
+        filename = self.save_report(report, days_back)
         
         print("Scraping complete!")
         if filename:
             print(f"Open {filename} to view the results")
-
-def run_manual():
-    """Run scraper manually"""
-    scraper = SimpleNewsScraper()
-    scraper.run_scraper()
 
 def run_scheduled():
     """Run scraper on schedule with default 7-day period"""
@@ -355,21 +460,21 @@ def main():
     args = parser.parse_args()
     
     if args.manual:
-        if args.days:
-            # Command line specified days
-            if 1 <= args.days <= 30:
-                scraper = SimpleNewsScraper()
-                scraper.run_scraper(args.days)
-            else:
-                print("Days must be between 1 and 30")
+        # Create scraper instance
+        scraper = SimpleNewsScraper()
+        
+        if args.days and 1 <= args.days <= 30:
+            # Use command line specified days
+            scraper.run_scraper(args.days)
         else:
-            # Interactive mode
-            run_manual()
+            # Use default 7 days
+            scraper.run_scraper(7)
+            
     elif args.schedule:
         run_scheduled()
     else:
         print("Usage:")
-        print("  python simple_scraper.py --manual              # Run now (interactive)")
+        print("  python simple_scraper.py --manual              # Run now (7 days default)")
         print("  python simple_scraper.py --manual --days 3     # Run for last 3 days")
         print("  python simple_scraper.py --schedule            # Run weekly")
 
