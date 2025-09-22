@@ -34,40 +34,60 @@ logging.basicConfig(
 class RobustNewsScraper:
     def __init__(self):
         self.session = requests.Session()
-        self.session.headers.update({
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-        })
+        
+        # Rotate User-Agents to avoid blocking
+        self.user_agents = [
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:89.0) Gecko/20100101 Firefox/89.0',
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:89.0) Gecko/20100101 Firefox/89.0',
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Edge/91.0.864.59'
+        ]
+        
+        self.current_ua_index = 0
+        self.update_user_agent()
+        
         # Set timeouts and retries
         self.session.timeout = 15
         
         # Enhanced news sources with RSS feeds including popular news websites
         self.sources = {
             "Defense News": [
-                # Specialized Defense Sources
-                "https://idrw.org/feed/",
+                # Specialized Defense Sources (Working)
                 "https://defence.in/feed/",
-                "https://www.indiandefensenews.in/feed/",
                 "https://www.defencexp.com/feed/",
+                # Alternative Defense Sources (To replace failed ones)
+                "https://www.defensenews.com/rss/",
+                "https://www.janes.com/feeds/defence-news",
+                "https://www.forceindia.net/rss.xml",
+                "https://www.livefistdefence.com/feeds/posts/default",
                 # Popular News Websites - Defense Sections
                 "https://timesofindia.indiatimes.com/india/rssfeeds/296589292.cms",
                 "https://www.thehindu.com/news/national/feeder/default.rss",
                 "https://indianexpress.com/section/india/feed/",
-                "https://www.ndtv.com/india-news/rss",
                 "https://www.hindustantimes.com/rss/india-news/rssfeed.xml",
                 "https://www.news18.com/rss/india.xml",
-                "https://zeenews.india.com/rss/india-national-news.xml"
+                "https://zeenews.india.com/rss/india-national-news.xml",
+                # Business/Defense Economics
+                "https://economictimes.indiatimes.com/defence/rssfeeds/50355294.cms",
+                "https://www.business-standard.com/rss/current-affairs-106.rss"
             ],
             "Space News": [
-                # Space Specific Sources
-                "https://www.isro.gov.in/rss.xml",
-                "https://ispa.space/feed/",
-                # Popular News Websites - Science/Tech Sections
+                # Alternative Space Sources (To replace failed ISRO/ISPA)
+                "https://spacenews.com/feed/",
+                "https://spaceflightnow.com/feed/",
+                "https://www.space.com/feeds/all",
+                "https://www.spacedaily.com/spacedaily.xml",
+                # Indian Space Coverage via News Sites
                 "https://www.thehindu.com/sci-tech/science/feeder/default.rss",
                 "https://timesofindia.indiatimes.com/rssfeeds/66949542.cms",
                 "https://indianexpress.com/section/technology/science/feed/",
-                "https://www.ndtv.com/science-news/rss",
                 "https://economictimes.indiatimes.com/industry/aerospace/defence/rssfeeds/13352306.cms",
-                "https://zeenews.india.com/rss/technology-news.xml"
+                "https://zeenews.india.com/rss/technology-news.xml",
+                "https://www.livemint.com/rss/technology",
+                # Business/Space Economics
+                "https://economictimes.indiatimes.com/tech/technology/rssfeeds/13357270.cms"
             ]
         }
         
@@ -168,10 +188,27 @@ class RobustNewsScraper:
             'errors': []
         }
     
+    def update_user_agent(self):
+        """Rotate User-Agent to avoid blocking"""
+        self.session.headers.update({
+            'User-Agent': self.user_agents[self.current_ua_index],
+            'Accept': 'application/rss+xml, application/xml, text/xml',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Accept-Encoding': 'gzip, deflate',
+            'Cache-Control': 'no-cache',
+            'Pragma': 'no-cache'
+        })
+        self.current_ua_index = (self.current_ua_index + 1) % len(self.user_agents)
+    
     def safe_request(self, url, timeout=15, max_retries=3):
-        """Make a safe HTTP request with retries and error handling"""
+        """Make a safe HTTP request with retries, User-Agent rotation, and error handling"""
         for attempt in range(max_retries):
             try:
+                # Rotate User-Agent for each attempt
+                if attempt > 0:
+                    self.update_user_agent()
+                    time.sleep(2)  # Brief delay between retries
+                
                 response = self.session.get(url, timeout=timeout)
                 response.raise_for_status()
                 return response
@@ -184,6 +221,16 @@ class RobustNewsScraper:
                 logging.warning(f"Connection error for {url} (attempt {attempt + 1}/{max_retries})")
                 if attempt == max_retries - 1:
                     self.stats['errors'].append(f"Connection error: {url}")
+                    return None
+            except requests.exceptions.HTTPError as e:
+                if e.response.status_code in [403, 404, 429]:
+                    logging.warning(f"HTTP {e.response.status_code} for {url} (attempt {attempt + 1}/{max_retries})")
+                    if attempt == max_retries - 1:
+                        self.stats['errors'].append(f"HTTP {e.response.status_code}: {url}")
+                        return None
+                else:
+                    logging.error(f"HTTP error for {url}: {str(e)}")
+                    self.stats['errors'].append(f"HTTP error {url}: {str(e)}")
                     return None
             except requests.exceptions.RequestException as e:
                 logging.warning(f"Request error for {url}: {str(e)}")
@@ -328,6 +375,9 @@ class RobustNewsScraper:
         
         logging.info(f"Looking for articles from the last {days_back} days (since {cutoff_date.strftime('%Y-%m-%d')})")
         
+        # Track failed URLs for alternative sourcing
+        failed_urls = []
+        
         for category, feeds in self.sources.items():
             logging.info(f"Scraping {category} sources...")
             
@@ -340,6 +390,7 @@ class RobustNewsScraper:
                     
                     if not response:
                         self.stats['failed_feeds'] += 1
+                        failed_urls.append(feed_url)
                         continue
                     
                     try:
@@ -394,6 +445,14 @@ class RobustNewsScraper:
                     logging.error(f"    Error processing {feed_url}: {str(e)}")
                     self.stats['errors'].append(f"Processing error {feed_url}: {str(e)}")
                     self.stats['failed_feeds'] += 1
+                    failed_urls.append(feed_url)
+        
+        # Try alternative sources for failed URLs
+        if failed_urls:
+            logging.info(f"Trying alternative sources for {len(failed_urls)} failed URLs...")
+            alternative_articles = self.try_alternative_sources(failed_urls)
+            articles.extend(alternative_articles)
+            logging.info(f"Retrieved {len(alternative_articles)} articles from alternative sources")
         
         return articles
     
@@ -413,7 +472,55 @@ class RobustNewsScraper:
         
         return unique_articles
     
-    def generate_company_summary(self, articles):
+    def try_alternative_sources(self, failed_urls):
+        """Try alternative methods to get content from failed sources"""
+        alternative_articles = []
+        
+        # For blocked ISRO content, try government press releases
+        if any('isro' in url.lower() for url in failed_urls):
+            try:
+                logging.info("Trying PIB for ISRO news...")
+                pib_url = "https://pib.gov.in/RssMain.aspx?ModId=7&Lang=1"
+                response = self.safe_request(pib_url)
+                if response:
+                    feed = feedparser.parse(response.content)
+                    for entry in feed.entries[:5]:
+                        if any(keyword in entry.title.lower() for keyword in ['isro', 'space', 'satellite', 'launch']):
+                            article = {
+                                'title': entry.title,
+                                'url': entry.link,
+                                'content': self.extract_full_article(entry.link),
+                                'date': self.parse_date(entry.get('published_parsed')),
+                                'source': 'PIB (Alternative for ISRO)',
+                                'category': 'Space News'
+                            }
+                            alternative_articles.append(article)
+            except Exception as e:
+                logging.warning(f"PIB alternative failed: {e}")
+        
+        # For defense news, try Ministry of Defence
+        if any('defense' in url.lower() or 'idrw' in url.lower() for url in failed_urls):
+            try:
+                logging.info("Trying MoD press releases...")
+                mod_url = "https://pib.gov.in/RssMain.aspx?ModId=8&Lang=1"
+                response = self.safe_request(mod_url)
+                if response:
+                    feed = feedparser.parse(response.content)
+                    for entry in feed.entries[:5]:
+                        if any(keyword in entry.title.lower() for keyword in self.high_priority_defense[:10]):
+                            article = {
+                                'title': entry.title,
+                                'url': entry.link,
+                                'content': self.extract_full_article(entry.link),
+                                'date': self.parse_date(entry.get('published_parsed')),
+                                'source': 'MoD PIB (Alternative)',
+                                'category': 'Defense News'
+                            }
+                            alternative_articles.append(article)
+            except Exception as e:
+                logging.warning(f"MoD PIB alternative failed: {e}")
+        
+        return alternative_articles
         """Generate a summary of companies mentioned across all articles"""
         
         # Enhanced company lists
