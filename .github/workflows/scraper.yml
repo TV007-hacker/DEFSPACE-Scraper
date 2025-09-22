@@ -45,7 +45,7 @@ jobs:
         DAYS_BACK="${{ github.event.inputs.days_back || '7' }}"
         
         # Run the scraper with error handling
-        python enhanced_scraper.py --manual --days "$DAYS_BACK" || {
+        python simple_scraper.py --manual --days "$DAYS_BACK" || {
           echo "Scraper failed with exit code $?"
           echo "Checking for partial results..."
           ls -la *.md || echo "No markdown files found"
@@ -59,7 +59,7 @@ jobs:
         
     - name: Upload artifacts
       if: always()  # Upload even if scraper partially failed
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: defense-news-report-${{ github.run_number }}
         path: |
