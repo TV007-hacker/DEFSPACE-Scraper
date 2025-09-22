@@ -1,89 +1,103 @@
-#!/usr/bin/env python3
-"""
-Code verification script to check for syntax and structural issues
-"""
+name: Defense News Scraper
 
-def verify_scraper_structure():
-    """Verify the scraper code structure"""
-    
-    required_methods = [
-        "__init__",
-        "update_user_agent", 
-        "safe_request",
-        "extract_full_article",
-        "clean_text", 
-        "is_relevant_article",
-        "parse_date",
-        "try_alternative_sources",
-        "remove_duplicates",
-        "generate_company_summary", 
-        "scrape_rss_feeds",
-        "generate_simple_report",
-        "save_report",
-        "run_scraper"
-    ]
-    
-    # Check imports
-    required_imports = [
-        "requests", "BeautifulSoup", "feedparser", "schedule", 
-        "time", "argparse", "datetime", "json", "re", "sys", 
-        "logging", "warnings"
-    ]
-    
-    print("✅ VERIFICATION CHECKLIST:")
-    print("=" * 50)
-    
-    print("\n1. REQUIRED IMPORTS:")
-    for imp in required_imports:
-        print(f"   ✅ {imp}")
-    
-    print("\n2. REQUIRED METHODS:")
-    for method in required_methods:
-        print(f"   ✅ {method}")
-    
-    print("\n3. COMMON ISSUES TO CHECK:")
-    checks = [
-        "Proper indentation (4 spaces)",
-        "All methods have 'self' parameter",
-        "No missing colons after function definitions",
-        "Proper return statements",
-        "No undefined variables",
-        "Balanced parentheses and brackets",
-        "No missing commas in data structures"
-    ]
-    
-    for check in checks:
-        print(f"   ✅ {check}")
-    
-    print("\n4. RSS FEED VERIFICATION:")
-    working_feeds = [
-        "https://defence.in/feed/",
-        "https://www.defencexp.com/feed/",
-        "https://timesofindia.indiatimes.com/india/rssfeeds/296589292.cms",
-        "https://www.thehindu.com/news/national/feeder/default.rss",
-        "https://indianexpress.com/section/india/feed/",
-        "https://spacenews.com/feed/",
-        "https://spaceflightnow.com/feed/",
-        "https://www.space.com/feeds/all"
-    ]
-    
-    for feed in working_feeds:
-        print(f"   ✅ {feed}")
-    
-    print("\n5. CRITICAL FIXES APPLIED:")
-    fixes = [
-        "Added missing 'remove_duplicates' method",
-        "Fixed 'generate_company_summary' placement", 
-        "Removed broken RSS URLs",
-        "Added proper error handling",
-        "Fixed exit code handling",
-        "Added User-Agent rotation"
-    ]
-    
-    for fix in fixes:
-        print(f"   ✅ {fix}")
-    
-    return True
+on:
+  # Manual trigger
+  workflow_dispatch:
+    inputs:
+      days_back:
+        description: 'Number of days to look back'
+        required: false
+        default: '7'
+        type: string
+  
+  # Scheduled run (every Monday at 9 AM UTC)
+  schedule:
+    - cron: '0 9 * * 1'
 
-if __name__ == "__main__":
-    verify_scraper_structure()
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+        cache: 'pip'
+        
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        
+    - name: Create output directory
+      run: mkdir -p output
+      
+    - name: Run scraper
+      env:
+        PYTHONUNBUFFERED: 1
+      run: |
+        # Set days back from input or default to 7
+        DAYS_BACK="${{ github.event.inputs.days_back || '7' }}"
+        
+        # Run the scraper with error handling
+        python simple_scraper.py --manual --days "$DAYS_BACK" || {
+          echo "Scraper failed with exit code $?"
+          echo "Checking for partial results..."
+          ls -la *.md || echo "No markdown files found"
+          exit 1
+        }
+        
+    - name: List generated files
+      run: |
+        echo "All files in current directory:"
+        ls -la
+        echo "Looking for markdown files:"
+        find . -name "*.md" -type f || echo "No .md files found"
+        echo "Looking for log files:"
+        find . -name "*.log" -type f || echo "No .log files found"
+        
+    - name: Upload artifacts
+      if: always()  # Upload even if scraper partially failed
+      uses: actions/upload-artifact@v4
+      with:
+        name: defense-news-report-${{ github.run_number }}
+        path: |
+          .
+        include-hidden-files: true
+        retention-days: 30
+        
+    - name: Commit and push results (optional)
+      if: success()
+      run: |
+        # Configure git (replace with your details)
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        
+        # Add generated files
+        git add *.md || echo "No markdown files to add"
+        
+        # Check if there are changes to commit
+        if git diff --staged --quiet; then
+          echo "No changes to commit"
+        else
+          git commit -m "Auto-update: Defense news report $(date +'%Y-%m-%d %H:%M')"
+          git push || echo "Push failed - check repository permissions"
+        fi
+
+  # Optional: Send notification on failure
+  notify-failure:
+    runs-on: ubuntu-latest
+    needs: scrape
+    if: failure()
+    
+    steps:
+    - name: Notify failure
+      run: |
+        echo "Scraper job failed. Check the logs for details."
+        echo "Run number: ${{ github.run_number }}"
+        echo "Run ID: ${{ github.run_id }}"
