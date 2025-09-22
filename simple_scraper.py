@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Enhanced Defense News Scraper - Improved Keyword Filtering
-Fixed keyword matching to reduce false positives
+Robust Defense News Scraper - Error-Free Version for GitHub Actions
+Includes comprehensive error handling and fallback mechanisms
 """
 
 import requests
@@ -13,13 +13,32 @@ import argparse
 from datetime import datetime, timedelta
 import json
 import re
+import sys
+import logging
+from urllib.parse import urljoin
+import warnings
 
-class EnhancedNewsScraper:
+# Suppress warnings to keep output clean
+warnings.filterwarnings("ignore")
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('scraper.log'),
+        logging.StreamHandler(sys.stdout)
+    ]
+)
+
+class RobustNewsScraper:
     def __init__(self):
         self.session = requests.Session()
         self.session.headers.update({
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         })
+        # Set timeouts and retries
+        self.session.timeout = 15
         
         # Enhanced news sources with RSS feeds including popular news websites
         self.sources = {
@@ -30,33 +49,25 @@ class EnhancedNewsScraper:
                 "https://www.indiandefensenews.in/feed/",
                 "https://www.defencexp.com/feed/",
                 # Popular News Websites - Defense Sections
-                "https://timesofindia.indiatimes.com/india/rssfeeds/296589292.cms",  # TOI India News
-                "https://www.thehindu.com/news/national/feeder/default.rss",  # The Hindu National
-                "https://indianexpress.com/section/india/feed/",  # Indian Express India
-                "https://www.ndtv.com/india-news/rss",  # NDTV India
-                "https://www.hindustantimes.com/rss/india-news/rssfeed.xml",  # HT India News
-                "https://www.news18.com/rss/india.xml",  # News18 India
-                "https://www.dnaindia.com/feeds/india.xml",  # DNA India
-                "https://zeenews.india.com/rss/india-national-news.xml",  # Zee News India
-                "https://www.business-standard.com/rss/current-affairs-106.rss"  # BS Current Affairs
+                "https://timesofindia.indiatimes.com/india/rssfeeds/296589292.cms",
+                "https://www.thehindu.com/news/national/feeder/default.rss",
+                "https://indianexpress.com/section/india/feed/",
+                "https://www.ndtv.com/india-news/rss",
+                "https://www.hindustantimes.com/rss/india-news/rssfeed.xml",
+                "https://www.news18.com/rss/india.xml",
+                "https://zeenews.india.com/rss/india-national-news.xml"
             ],
             "Space News": [
                 # Space Specific Sources
                 "https://www.isro.gov.in/rss.xml",
                 "https://ispa.space/feed/",
                 # Popular News Websites - Science/Tech Sections
-                "https://www.thehindu.com/sci-tech/science/feeder/default.rss",  # The Hindu Science
-                "https://timesofindia.indiatimes.com/rssfeeds/66949542.cms",  # TOI Science
-                "https://indianexpress.com/section/technology/science/feed/",  # IE Science
-                "https://www.ndtv.com/science-news/rss",  # NDTV Science
-                "https://www.hindustantimes.com/rss/science/rssfeed.xml",  # HT Science
-                "https://www.news18.com/rss/tech.xml",  # News18 Tech
-                "https://economictimes.indiatimes.com/industry/aerospace/defence/rssfeeds/13352306.cms",  # ET Aerospace
-                "https://www.livemint.com/rss/technology",  # Mint Technology
-                "https://zeenews.india.com/rss/technology-news.xml",  # Zee Tech
-                # International Space News (for context)
-                "https://www.space.com/feeds/all",  # Space.com
-                "https://spaceflightnow.com/feed/"  # Spaceflight Now
+                "https://www.thehindu.com/sci-tech/science/feeder/default.rss",
+                "https://timesofindia.indiatimes.com/rssfeeds/66949542.cms",
+                "https://indianexpress.com/section/technology/science/feed/",
+                "https://www.ndtv.com/science-news/rss",
+                "https://economictimes.indiatimes.com/industry/aerospace/defence/rssfeeds/13352306.cms",
+                "https://zeenews.india.com/rss/technology-news.xml"
             ]
         }
         
@@ -146,12 +157,49 @@ class EnhancedNewsScraper:
         ]
         
         self.all_keywords = self.high_priority_defense + self.high_priority_space + self.defense_keywords + self.space_keywords
+        
+        # Statistics tracking
+        self.stats = {
+            'total_feeds_processed': 0,
+            'successful_feeds': 0,
+            'failed_feeds': 0,
+            'total_articles_found': 0,
+            'relevant_articles': 0,
+            'errors': []
+        }
+    
+    def safe_request(self, url, timeout=15, max_retries=3):
+        """Make a safe HTTP request with retries and error handling"""
+        for attempt in range(max_retries):
+            try:
+                response = self.session.get(url, timeout=timeout)
+                response.raise_for_status()
+                return response
+            except requests.exceptions.Timeout:
+                logging.warning(f"Timeout for {url} (attempt {attempt + 1}/{max_retries})")
+                if attempt == max_retries - 1:
+                    self.stats['errors'].append(f"Timeout: {url}")
+                    return None
+            except requests.exceptions.ConnectionError:
+                logging.warning(f"Connection error for {url} (attempt {attempt + 1}/{max_retries})")
+                if attempt == max_retries - 1:
+                    self.stats['errors'].append(f"Connection error: {url}")
+                    return None
+            except requests.exceptions.RequestException as e:
+                logging.warning(f"Request error for {url}: {str(e)}")
+                self.stats['errors'].append(f"Request error {url}: {str(e)}")
+                return None
+            except Exception as e:
+                logging.error(f"Unexpected error for {url}: {str(e)}")
+                self.stats['errors'].append(f"Unexpected error {url}: {str(e)}")
+                return None
+        return None
     
     def extract_full_article(self, url):
-        """Extract full article text from URL"""
+        """Extract full article text from URL with error handling"""
         try:
-            response = self.session.get(url, timeout=10)
-            if response.status_code != 200:
+            response = self.safe_request(url, timeout=10)
+            if not response:
                 return "Could not fetch article content"
             
             soup = BeautifulSoup(response.content, 'html.parser')
@@ -182,13 +230,17 @@ class EnhancedNewsScraper:
             
             # Clean up the text
             content = self.clean_text(content)
-            return content
+            return content if content else "No content extracted"
             
         except Exception as e:
+            logging.error(f"Error extracting content from {url}: {str(e)}")
             return f"Error extracting content: {str(e)}"
     
     def clean_text(self, text):
         """Clean and format text"""
+        if not text:
+            return ""
+            
         # Remove extra whitespace
         text = re.sub(r'\n+', '\n', text)
         text = re.sub(r' +', ' ', text)
@@ -209,7 +261,10 @@ class EnhancedNewsScraper:
     
     def is_relevant_article(self, title, content):
         """Enhanced relevance check with better filtering"""
-        text = (title + " " + content).lower()
+        if not title and not content:
+            return False
+            
+        text = (str(title) + " " + str(content)).lower()
         
         # First, check for exclusion keywords
         if any(excl_keyword in text for excl_keyword in self.exclusion_keywords):
@@ -261,66 +316,84 @@ class EnhancedNewsScraper:
                         return datetime.strptime(date_string, fmt).strftime("%d %B %Y")
                     except ValueError:
                         continue
-        except:
-            pass
+        except Exception as e:
+            logging.warning(f"Date parsing error: {str(e)}")
         
         return datetime.now().strftime("%d %B %Y")
     
-    def add_google_news_search(self, days_back=7):
-        """Add Google News search for Indian space developments"""
+    def scrape_rss_feeds(self, days_back=7):
+        """Scrape all RSS feeds for articles from specified number of days"""
         articles = []
+        cutoff_date = datetime.now() - timedelta(days=days_back)
         
-        # More specific search terms for better relevance
-        search_terms = [
-            "ISRO mission launch India",
-            "Indian defense procurement contract",
-            "HAL Tejas fighter aircraft India",
-            "DRDO missile test India",
-            "Indian space startup funding",
-            "Skyroot Aerospace India launch",
-            "Agnikul Cosmos India rocket"
-        ]
+        logging.info(f"Looking for articles from the last {days_back} days (since {cutoff_date.strftime('%Y-%m-%d')})")
         
-        print("Searching Google News for defense and space developments...")
-        
-        for term in search_terms[:3]:  # Limit searches to avoid rate limiting
-            try:
-                # Simple Google News RSS search
-                encoded_term = term.replace(" ", "+")
-                search_url = f"https://news.google.com/rss/search?q={encoded_term}+india&hl=en-IN&gl=IN&ceid=IN:en"
+        for category, feeds in self.sources.items():
+            logging.info(f"Scraping {category} sources...")
+            
+            for feed_url in feeds:
+                self.stats['total_feeds_processed'] += 1
                 
-                response = self.session.get(search_url, timeout=10)
-                if response.status_code == 200:
-                    feed = feedparser.parse(response.content)
+                try:
+                    logging.info(f"  - Processing: {feed_url}")
+                    response = self.safe_request(feed_url)
                     
-                    for entry in feed.entries[:2]:  # Top 2 results per search
-                        # Check date
-                        if hasattr(entry, 'published_parsed') and entry.published_parsed:
-                            pub_date = datetime(*entry.published_parsed[:6])
-                            cutoff_date = datetime.now() - timedelta(days=days_back)
-                            if pub_date < cutoff_date:
-                                continue
+                    if not response:
+                        self.stats['failed_feeds'] += 1
+                        continue
+                    
+                    try:
+                        feed = feedparser.parse(response.content)
+                        self.stats['successful_feeds'] += 1
                         
-                        # Check relevance with enhanced filtering
-                        if self.is_relevant_article(entry.title, entry.get('summary', '')):
-                            print(f"    Found: {entry.title[:60]}...")
+                        if not feed.entries:
+                            logging.warning(f"    No entries found in feed: {feed_url}")
+                            continue
                             
-                            # Extract full content
-                            full_content = self.extract_full_article(entry.link)
+                        for entry in feed.entries[:10]:  # Limit to 10 articles per feed
+                            self.stats['total_articles_found'] += 1
                             
-                            article = {
-                                'title': entry.title,
-                                'url': entry.link,
-                                'content': full_content,
-                                'date': self.parse_date(entry.get('published_parsed')),
-                                'source': 'Google News Search',
-                                'category': 'Space News' if any(kw in entry.title.lower() for kw in self.high_priority_space + ['space', 'satellite', 'launch', 'rocket']) else 'Defense News'
-                            }
+                            # Check if article is within specified timeframe
+                            if hasattr(entry, 'published_parsed') and entry.published_parsed:
+                                try:
+                                    pub_date = datetime(*entry.published_parsed[:6])
+                                    if pub_date < cutoff_date:
+                                        continue
+                                except Exception as e:
+                                    logging.warning(f"    Date parsing error: {str(e)}")
+                                    continue
                             
-                            articles.append(article)
-                            
-            except Exception as e:
-                print(f"    Error searching for '{term}': {e}")
+                            # Enhanced relevance check
+                            if self.is_relevant_article(entry.get('title', ''), entry.get('summary', '')):
+                                self.stats['relevant_articles'] += 1
+                                
+                                # Extract full article content
+                                logging.info(f"    Extracting: {entry.get('title', 'No title')[:50]}...")
+                                full_content = self.extract_full_article(entry.get('link', ''))
+                                
+                                # Parse publication date
+                                pub_date = self.parse_date(entry.get('published_parsed'))
+                                
+                                article = {
+                                    'title': entry.get('title', 'No title'),
+                                    'url': entry.get('link', ''),
+                                    'content': full_content,
+                                    'date': pub_date,
+                                    'source': feed_url,
+                                    'category': category
+                                }
+                                
+                                articles.append(article)
+                                
+                    except Exception as e:
+                        logging.error(f"    Error parsing feed {feed_url}: {str(e)}")
+                        self.stats['errors'].append(f"Feed parsing error {feed_url}: {str(e)}")
+                        self.stats['failed_feeds'] += 1
+                        
+                except Exception as e:
+                    logging.error(f"    Error processing {feed_url}: {str(e)}")
+                    self.stats['errors'].append(f"Processing error {feed_url}: {str(e)}")
+                    self.stats['failed_feeds'] += 1
         
         return articles
     
@@ -331,75 +404,14 @@ class EnhancedNewsScraper:
         
         for article in articles:
             # Simple deduplication based on title
-            title_key = re.sub(r'[^\w\s]', '', article['title'].lower())
+            title_key = re.sub(r'[^\w\s]', '', article.get('title', '').lower())
             title_key = ' '.join(title_key.split()[:5])  # First 5 words
             
-            if title_key not in seen_titles:
+            if title_key not in seen_titles and title_key.strip():
                 seen_titles.add(title_key)
                 unique_articles.append(article)
         
         return unique_articles
-    
-    def scrape_rss_feeds(self, days_back=7):
-        """Scrape all RSS feeds for articles from specified number of days"""
-        articles = []
-        cutoff_date = datetime.now() - timedelta(days=days_back)
-        
-        print(f"Looking for articles from the last {days_back} days (since {cutoff_date.strftime('%Y-%m-%d')})")
-        
-        for category, feeds in self.sources.items():
-            print(f"Scraping {category} sources...")
-            
-            for feed_url in feeds:
-                try:
-                    print(f"  - {feed_url}")
-                    response = self.session.get(feed_url, timeout=10)
-                    
-                    if response.status_code == 200:
-                        feed = feedparser.parse(response.content)
-                        
-                        for entry in feed.entries[:15]:  # Check more articles
-                            # Check if article is within specified timeframe
-                            if hasattr(entry, 'published_parsed') and entry.published_parsed:
-                                pub_date = datetime(*entry.published_parsed[:6])
-                                if pub_date < cutoff_date:
-                                    continue
-                            
-                            # Enhanced relevance check
-                            if self.is_relevant_article(entry.title, entry.get('summary', '')):
-                                
-                                # Extract full article content
-                                print(f"    Extracting: {entry.title[:50]}...")
-                                full_content = self.extract_full_article(entry.link)
-                                
-                                # Parse publication date
-                                pub_date = self.parse_date(entry.get('published_parsed'))
-                                
-                                article = {
-                                    'title': entry.title,
-                                    'url': entry.link,
-                                    'content': full_content,
-                                    'date': pub_date,
-                                    'source': feed_url,
-                                    'category': category
-                                }
-                                
-                                articles.append(article)
-                                
-                except Exception as e:
-                    print(f"    Error scraping {feed_url}: {e}")
-        
-        # Add Google News search results
-        try:
-            google_articles = self.add_google_news_search(days_back)
-            articles.extend(google_articles)
-        except Exception as e:
-            print(f"Error in Google News search: {e}")
-        
-        # Remove duplicates based on title similarity
-        articles = self.remove_duplicates(articles)
-        
-        return articles
     
     def generate_company_summary(self, articles):
         """Generate a summary of companies mentioned across all articles"""
@@ -430,7 +442,7 @@ class EnhancedNewsScraper:
         mentioned_space = set()
         
         for article in articles:
-            text = (article['title'] + " " + article['content']).lower()
+            text = (article.get('title', '') + " " + article.get('content', '')).lower()
             
             for company in defense_companies:
                 if company.lower() in text:
@@ -459,8 +471,8 @@ class EnhancedNewsScraper:
             return f"No articles found for the last {days_back} days."
         
         # Separate articles by category
-        defense_articles = [a for a in articles if a['category'] == 'Defense News']
-        space_articles = [a for a in articles if a['category'] == 'Space News']
+        defense_articles = [a for a in articles if a.get('category') == 'Defense News']
+        space_articles = [a for a in articles if a.get('category') == 'Space News']
         
         period_text = f"last {days_back} day{'s' if days_back != 1 else ''}"
         report = f"""# Defense & Space News Summary
@@ -476,14 +488,14 @@ class EnhancedNewsScraper:
         if defense_articles:
             report += f"## 🛡️ DEFENSE SECTOR NEWS ({len(defense_articles)} articles)\n\n"
             for i, article in enumerate(defense_articles, 1):
-                report += f"""### {i}. {article['title']}
+                report += f"""### {i}. {article.get('title', 'No title')}
 
-**Date:** {article['date']}
-**Link:** {article['url']}
-**Source:** {article['source']}
+**Date:** {article.get('date', 'Unknown')}
+**Link:** {article.get('url', 'No URL')}
+**Source:** {article.get('source', 'Unknown')}
 
 **Full Article Text:**
-{article['content']}
+{article.get('content', 'No content available')}
 
 ---
 
@@ -493,14 +505,14 @@ class EnhancedNewsScraper:
         if space_articles:
             report += f"## 🚀 SPACE SECTOR NEWS ({len(space_articles)} articles)\n\n"
             for i, article in enumerate(space_articles, 1):
-                report += f"""### {i}. {article['title']}
+                report += f"""### {i}. {article.get('title', 'No title')}
 
-**Date:** {article['date']}
-**Link:** {article['url']}
-**Source:** {article['source']}
+**Date:** {article.get('date', 'Unknown')}
+**Link:** {article.get('url', 'No URL')}
+**Source:** {article.get('source', 'Unknown')}
 
 **Full Article Text:**
-{article['content']}
+{article.get('content', 'No content available')}
 
 ---
 
@@ -508,6 +520,26 @@ class EnhancedNewsScraper:
         
         # Add summary of companies mentioned
         report += self.generate_company_summary(articles)
+        
+        # Add statistics
+        report += f"""
+## 📈 SCRAPING STATISTICS
+
+- Total feeds processed: {self.stats['total_feeds_processed']}
+- Successful feeds: {self.stats['successful_feeds']}
+- Failed feeds: {self.stats['failed_feeds']}
+- Total articles found: {self.stats['total_articles_found']}
+- Relevant articles: {self.stats['relevant_articles']}
+- Success rate: {(self.stats['successful_feeds'] / max(self.stats['total_feeds_processed'], 1)) * 100:.1f}%
+
+"""
+        
+        if self.stats['errors']:
+            report += "## ⚠️ ERRORS ENCOUNTERED\n\n"
+            for error in self.stats['errors'][:10]:  # Show max 10 errors
+                report += f"- {error}\n"
+            if len(self.stats['errors']) > 10:
+                report += f"- ... and {len(self.stats['errors']) - 10} more errors\n"
         
         return report
     
@@ -517,57 +549,58 @@ class EnhancedNewsScraper:
         try:
             with open(filename, 'w', encoding='utf-8') as f:
                 f.write(report)
-            print(f"Report saved to: {filename}")
+            logging.info(f"Report saved to: {filename}")
             return filename
         except Exception as e:
-            print(f"Error saving report: {e}")
+            logging.error(f"Error saving report: {e}")
             return None
     
     def run_scraper(self, days_back=7):
-        """Main scraping function - Enhanced version"""
-        print("Starting enhanced defense & space news scraping...")
-        print(f"Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        print(f"Looking for articles from the last {days_back} days")
-        
-        # Scrape articles
-        articles = self.scrape_rss_feeds(days_back)
-        
-        if not articles:
-            print(f"No relevant articles found for the last {days_back} days.")
-            return
-        
-        print(f"Found {len(articles)} relevant articles")
-        
-        # Generate report
-        report = self.generate_simple_report(articles, days_back)
-        
-        # Save report
-        filename = self.save_report(report, days_back)
-        
-        print("Scraping complete!")
-        if filename:
-            print(f"Open {filename} to view the results")
-
-def run_scheduled():
-    """Run scraper on schedule with default 7-day period"""
-    scraper = EnhancedNewsScraper()
-    
-    # Schedule for every Monday at 9 AM
-    schedule.every().monday.at("09:00").do(scraper.run_scraper, 7)
-    
-    print("Scheduler started. Will run every Monday at 9:00 AM")
-    print("Press Ctrl+C to stop")
-    
-    try:
-        while True:
-            schedule.run_pending()
-            time.sleep(60)  # Check every minute
-    except KeyboardInterrupt:
-        print("\nScheduler stopped")
+        """Main scraping function - Robust version"""
+        try:
+            logging.info("Starting robust defense & space news scraping...")
+            logging.info(f"Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+            logging.info(f"Looking for articles from the last {days_back} days")
+            
+            # Scrape articles
+            articles = self.scrape_rss_feeds(days_back)
+            
+            # Remove duplicates
+            articles = self.remove_duplicates(articles)
+            
+            logging.info(f"Found {len(articles)} unique relevant articles")
+            
+            # Generate report even if no articles found
+            report = self.generate_simple_report(articles, days_back)
+            
+            # Save report
+            filename = self.save_report(report, days_back)
+            
+            # Log final statistics
+            logging.info("Scraping completed successfully!")
+            logging.info(f"Statistics: {self.stats['successful_feeds']}/{self.stats['total_feeds_processed']} feeds successful")
+            logging.info(f"Found {self.stats['relevant_articles']} relevant articles out of {self.stats['total_articles_found']} total")
+            
+            if filename:
+                logging.info(f"Report saved as: {filename}")
+            
+            # Exit with appropriate code
+            if self.stats['successful_feeds'] == 0:
+                logging.error("No feeds were successfully processed!")
+                sys.exit(1)
+            elif len(articles) == 0:
+                logging.warning("No relevant articles found, but some feeds were processed successfully")
+                sys.exit(0)
+            else:
+                sys.exit(0)
+                
+        except Exception as e:
+            logging.error(f"Critical error in main scraping function: {str(e)}")
+            sys.exit(1)
 
 def main():
-    parser = argparse.ArgumentParser(description='Enhanced Defense News Scraper')
-    parser.add_argument('--manual', action='store_true', help='Run scraper now (with time selection)')
+    parser = argparse.ArgumentParser(description='Robust Defense News Scraper')
+    parser.add_argument('--manual', action='store_true', help='Run scraper now')
     parser.add_argument('--schedule', action='store_true', help='Start scheduled scraper (weekly)')
     parser.add_argument('--days', type=int, help='Number of days to look back (1-30)', default=7)
     
@@ -575,7 +608,7 @@ def main():
     
     if args.manual:
         # Create scraper instance
-        scraper = EnhancedNewsScraper()
+        scraper = RobustNewsScraper()
         
         if args.days and 1 <= args.days <= 30:
             # Use command line specified days
@@ -588,9 +621,26 @@ def main():
         run_scheduled()
     else:
         print("Usage:")
-        print("  python enhanced_scraper.py --manual              # Run now (7 days default)")
-        print("  python enhanced_scraper.py --manual --days 3     # Run for last 3 days")
-        print("  python enhanced_scraper.py --schedule            # Run weekly")
+        print("  python robust_scraper.py --manual              # Run now (7 days default)")
+        print("  python robust_scraper.py --manual --days 3     # Run for last 3 days")
+        print("  python robust_scraper.py --schedule            # Run weekly")
+
+def run_scheduled():
+    """Run scraper on schedule with default 7-day period"""
+    scraper = RobustNewsScraper()
+    
+    # Schedule for every Monday at 9 AM
+    schedule.every().monday.at("09:00").do(scraper.run_scraper, 7)
+    
+    logging.info("Scheduler started. Will run every Monday at 9:00 AM")
+    logging.info("Press Ctrl+C to stop")
+    
+    try:
+        while True:
+            schedule.run_pending()
+            time.sleep(60)  # Check every minute
+    except KeyboardInterrupt:
+        logging.info("Scheduler stopped")
 
 if __name__ == "__main__":
     main()
